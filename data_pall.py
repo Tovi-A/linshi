@@ -6,13 +6,13 @@ import time
 
 # Import MNIST data
 from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
+mnist = input_data.read_data_sets("./", one_hot=True)
 
 # Parameters
 num_gpus = 2
 num_steps = 200
 learning_rate = 0.001
-batch_size = 1024
+batch_size = 1024*3
 display_step = 10
 
 # Network Parameters
@@ -153,6 +153,7 @@ with tf.device('/cpu:0'):
 
     # Launch the graph
     with tf.Session() as sess:
+        sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
         sess.run(init)
         step = 1
         # Keep training until reach max iterations
