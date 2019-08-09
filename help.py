@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-tf.app.flags.DEFINE_string("ps_hosts", "192.168.1.104:2222", "ps hosts")
-tf.app.flags.DEFINE_string("worker_hosts", "192.168.1.100:2222", "worker hosts")
+tf.app.flags.DEFINE_string("ps_hosts", "192.168.1.100:2222", "ps hosts")
+tf.app.flags.DEFINE_string("worker_hosts", "192.168.1.104:2222", "worker hosts")
 tf.app.flags.DEFINE_string("job_name", "worker", "'ps' or'worker'")
 tf.app.flags.DEFINE_integer("task_index", 0, "Index of task within the job")
 

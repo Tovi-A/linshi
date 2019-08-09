@@ -73,8 +73,8 @@ def CNN(x, devices):
     return out
 
 # Define devices that we wish to split our graph over
-device0='/job:worker/task:0'
-device1='/job:worker/task:1'
+device0="/job:ps/task:0"
+device1="/job:worker/task:0"
 devices=(device0, device1)
 
 # 清空default以及nodes
@@ -106,7 +106,7 @@ with tf.device(devices[1]):
     init = tf.global_variables_initializer()
 
 # Start training
-with tf.Session("grpc://localhost:2222") as sess:  # <----- IMPORTANT: Pass the server target to the session definition
+with tf.Session("grpc://192.168.1.104:2222") as sess:  # <----- IMPORTANT: Pass the server target to the session definition
 
     # Run the initializer
     sess.run(init)
