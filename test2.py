@@ -2,8 +2,8 @@ import tensorflow as tf
 
 if __name__ == "__main__":
     with tf.device("/job:worker/task:0"):
-        x = tf.Variable(tf.ones([2, 2]))
-        y = tf.Variable(tf.ones([2, 2]))
+        x = tf.Variable(tf.ones([3, 3]))
+        y = tf.Variable(tf.ones([3, 3]))
 
         z = tf.matmul(x, y) + x
         
