@@ -51,7 +51,7 @@ def CNN(x):
         conv2=conv_layer(pool1, 32, 64, strides=1)
         pool2=maxpool2d(conv2)
 
-    with tf.device("/job:worker/task:1"):  # <----------- Put second half of network on device 1
+    with tf.device("/job:worker/task:0"):  # <----------- Put second half of network on device 1
         # Fully connected layer
         fc1 = tf.reshape(pool2, [-1, 7*7*64])
         w1 = tf.Variable(tf.random_normal([7*7*64, 1024]))
@@ -72,9 +72,9 @@ def CNN(x):
 
     return out
 
-
+tf.reset_default_graph() # Reset graph
 # Construct model
-with tf.device("/job:worker/task:1"):
+with tf.device("/job:ps/task:0"):
     X = tf.placeholder(tf.float32, [None, num_input]) # Input images feedable
     Y = tf.placeholder(tf.float32, [None, num_classes]) # Ground truth feedable
     print("X:", X.device)
@@ -82,7 +82,7 @@ with tf.device("/job:worker/task:1"):
     
 logits = CNN(X) # Unscaled probabilities
 
-with tf.device("/job:worker/task:1"):
+with tf.device("/job:worker/task:0"):
     
     prediction = tf.nn.softmax(logits) # Class-wise probabilities
     
@@ -97,9 +97,25 @@ with tf.device("/job:worker/task:1"):
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
     init = tf.global_variables_initializer()
+# Set up cluster
+#IP_ADDRESS1='192.168.1.100'
+#PORT1='2222'
+#IP_ADDRESS2='192.168.1.103'
+#PORT2='2224'
 
+# This line should match the same cluster definition in the Helper_Server.ipynb
+#cluster_spec = tf.train.ClusterSpec({'worker' : [(IP_ADDRESS1 + ":" + PORT1), (IP_ADDRESS2 + ":" + PORT2)]})
+#cluster_spec = tf.train.ClusterSpec({'worker' : [IP_ADDRESS1 + ":" + PORT1]})
+
+#task_idx=0 # We have chosen this machine to be our chief (The first IPaddress:Port combo), so task_idx=0
+#server = tf.train.Server(cluster_spec, job_name='worker', task_index=task_idx)
+
+# Check the server definition
+#server.server_def
 # Start training
-with tf.Session("grpc://192.168.1.104:2222") as sess:  # <----- IMPORTANT: Pass the server target to the session definition
+with tf.Session("grpc://192.168.1.106:2251") as sess:  # <----- IMPORTANT: Pass the server target to the session definition
+#print(server.target)
+#with tf.Session(server.target) as sess:  # <----- IMPORTANT: Pass the server target to the session definition
 
     # Run the initializer
     sess.run(init)

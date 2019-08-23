@@ -1,122 +1,135 @@
-# encoding:utf-8
-import math
-import tempfile
-import time
+from  __future__  import division, print_function, absolute_import
+
 import tensorflow as tf
+
+# Get data
 from tensorflow.examples.tutorials.mnist import input_data
-
-flags = tf.app.flags
-IMAGE_PIXELS = 28
-# 定义默认训练参数和数据路径
-flags.DEFINE_string('data_dir', '/tmp/mnist-data', 'Directory  for storing mnist data')
-flags.DEFINE_integer('hidden_units', 100, 'Number of units in the hidden layer of the NN')
-flags.DEFINE_integer('train_steps', 10000, 'Number of training steps to perform')
-flags.DEFINE_integer('batch_size', 100, 'Training batch size ')
-flags.DEFINE_float('learning_rate', 0.01, 'Learning rate')
-# 定义分布式参数
-# 参数服务器parameter server节点
-flags.DEFINE_string('ps_hosts', '192.168.32.145:22221', 'Comma-separated list of hostname:port pairs')
-# 两个worker节点
-flags.DEFINE_string('worker_hosts', '192.168.32.146:22221,192.168.32.160:22221',
-                    'Comma-separated list of hostname:port pairs')
-# 设置job name参数
-flags.DEFINE_string('job_name', None, 'job name: worker or ps')
-# 设置任务的索引
-flags.DEFINE_integer('task_index', None, 'Index of task within the job')
-# 选择异步并行，同步并行
-flags.DEFINE_integer("issync", None, "是否采用分布式的同步模式，1表示同步模式，0表示异步模式")
-
-FLAGS = flags.FLAGS
+mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
 
 
-def main(unused_argv):
-    mnist = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
+# Some numbers
+batch_size = 128
+display_step = 10
+num_input = 784
+num_classes = 10
 
-    if FLAGS.job_name is None or FLAGS.job_name == '':
-        raise ValueError('Must specify an explicit job_name !')
-    else:
-        print 'job_name : %s' % FLAGS.job_name
-    if FLAGS.task_index is None or FLAGS.task_index == '':
-        raise ValueError('Must specify an explicit task_index!')
-    else:
-        print 'task_index : %d' % FLAGS.task_index
+def conv_layer(inputs, channels_in, channels_out, strides=1):       
+        
+        # Create variables
+        w = tf.Variable(tf.random_normal([3, 3, channels_in, channels_out]))
+        b = tf.Variable(tf.random_normal([channels_out]))
+        
+        # We can double check the device that this variable was placed on
+        print("w:", w.device) 
+        print("b:", b.device)
+        
+        # "SAME"在不足时候会填充，而"VALID"会舍弃
+        # Define Ops
+        x = tf.nn.conv2d(inputs, w, strides=[1, strides, strides, 1], padding='SAME')
+        x = tf.nn.bias_add(x, b)
+        
+        # Non-linear activation
+        return tf.nn.relu(x)
 
-    ps_spec = FLAGS.ps_hosts.split(',')
-    worker_spec = FLAGS.worker_hosts.split(',')
+    
+def maxpool2d(x, k=2):
+    return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, k, k, 1], padding='SAME')
 
-    # 创建集群
-    num_worker = len(worker_spec)
-    cluster = tf.train.ClusterSpec({'ps': ps_spec, 'worker': worker_spec})
-    server = tf.train.Server(cluster, job_name=FLAGS.job_name, task_index=FLAGS.task_index)
-    if FLAGS.job_name == 'ps':
-        server.join()
 
-    is_chief = (FLAGS.task_index == 0)
-    # worker_device = '/job:worker/task%d/cpu:0' % FLAGS.task_index
-    with tf.device(tf.train.replica_device_setter(
-            cluster=cluster
-    )):
-        global_step = tf.Variable(0, name='global_step', trainable=False)  # 创建纪录全局训练步数变量
+# Create model
+def CNN(x):
+    
+    with tf.device("/job:worker/task:0"): # <----------- Put first half of network on device 0
 
-        hid_w = tf.Variable(tf.truncated_normal([IMAGE_PIXELS * IMAGE_PIXELS, FLAGS.hidden_units],
-                                                stddev=1.0 / IMAGE_PIXELS), name='hid_w')
-        hid_b = tf.Variable(tf.zeros([FLAGS.hidden_units]), name='hid_b')
+        x = tf.reshape(x, shape=[-1, 28, 28, 1])
 
-        sm_w = tf.Variable(tf.truncated_normal([FLAGS.hidden_units, 10],
-                                               stddev=1.0 / math.sqrt(FLAGS.hidden_units)), name='sm_w')
-        sm_b = tf.Variable(tf.zeros([10]), name='sm_b')
+        # Convolution Layer
+        conv1 = conv_layer(x, 1, 32, strides=1)
+        pool1 = maxpool2d(conv1)
 
-        x = tf.placeholder(tf.float32, [None, IMAGE_PIXELS * IMAGE_PIXELS])
-        y_ = tf.placeholder(tf.float32, [None, 10])
+        # Convolution Layer
+        conv2=conv_layer(pool1, 32, 64, strides=1)
+        pool2=maxpool2d(conv2)
 
-        hid_lin = tf.nn.xw_plus_b(x, hid_w, hid_b)
-        hid = tf.nn.relu(hid_lin)
+    with tf.device("/job:worker/task:0"):  # <----------- Put second half of network on device 1
+        # Fully connected layer
+        fc1 = tf.reshape(pool2, [-1, 7*7*64])
+        w1 = tf.Variable(tf.random_normal([7*7*64, 1024]))
+        b1 = tf.Variable(tf.random_normal([1024]))
+        fc1 = tf.add(tf.matmul(fc1,w1),b1)
+        fc1 = tf.nn.relu(fc1)
 
-        y = tf.nn.softmax(tf.nn.xw_plus_b(hid, sm_w, sm_b))
-        cross_entropy = -tf.reduce_sum(y_ * tf.log(tf.clip_by_value(y, 1e-10, 1.0)))
+        # Output layer
+        w2 = tf.Variable(tf.random_normal([1024, num_classes]))
+        b2 = tf.Variable(tf.random_normal([num_classes]))
+        out = tf.add(tf.matmul(fc1,w2),b2)
+        
+        # Check devices for good measure
+        print("w1:", w1.device)
+        print("b1:", b1.device)
+        print("w2", w2.device)
+        print("b2", b2.device)
 
-        opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+    return out
 
-        train_step = opt.minimize(cross_entropy, global_step=global_step)
-        # 生成本地的参数初始化操作init_op
-        init_op = tf.global_variables_initializer()
-        train_dir = tempfile.mkdtemp()
-        sv = tf.train.Supervisor(is_chief=is_chief, logdir=train_dir, init_op=init_op, recovery_wait_secs=1,
-                                 global_step=global_step)
+#tf.reset_default_graph() # Reset graph
+# Construct model
+with tf.device("/job:worker/task:0"):
+    X = tf.placeholder(tf.float32, [None, num_input]) # Input images feedable
+    Y = tf.placeholder(tf.float32, [None, num_classes]) # Ground truth feedable
+    print("X:", X.device)
+    print("Y:", Y.device)
+    
+logits = CNN(X) # Unscaled probabilities
 
-        if is_chief:
-            print 'Worker %d: Initailizing session...' % FLAGS.task_index
-        else:
-            print 'Worker %d: Waiting for session to be initaialized...' % FLAGS.task_index
-        sess = sv.prepare_or_wait_for_session(server.target)
-        print 'Worker %d: Session initialization  complete.' % FLAGS.task_index
+with tf.device("/job:worker/task:0"):
+    
+    prediction = tf.nn.softmax(logits) # Class-wise probabilities
+    
+    # Define loss and optimizer
+    loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=Y))
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
+    train_op = optimizer.minimize(loss_op)
 
-        time_begin = time.time()
-        print 'Traing begins @ %f' % time_begin
+    # Evaluate model
+    # tf.argmax(vector, 1):返回vector最大值的索引号
+    correct_pred = tf.equal(tf.argmax(prediction, 1), tf.argmax(Y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
-        local_step = 0
-        while True:
-            batch_xs, batch_ys = mnist.train.next_batch(FLAGS.batch_size)
-            train_feed = {x: batch_xs, y_: batch_ys}
+    init = tf.global_variables_initializer()
+# Set up cluster
+#IP_ADDRESS1='192.168.1.100'
+#PORT1='2222'
+#IP_ADDRESS2='192.168.1.103'
+#PORT2='2224'
 
-            _, step = sess.run([train_step, global_step], feed_dict=train_feed)
-            local_step += 1
+# This line should match the same cluster definition in the Helper_Server.ipynb
+#cluster_spec = tf.train.ClusterSpec({'worker' : [(IP_ADDRESS1 + ":" + PORT1), (IP_ADDRESS2 + ":" + PORT2)]})
+#cluster_spec = tf.train.ClusterSpec({'worker' : [IP_ADDRESS1 + ":" + PORT1]})
 
-            now = time.time()
-            print '%f: Worker %d: traing step %d dome (global step:%d)' % (now, FLAGS.task_index, local_step, step)
+#task_idx=0 # We have chosen this machine to be our chief (The first IPaddress:Port combo), so task_idx=0
+#server = tf.train.Server(cluster_spec, job_name='worker', task_index=task_idx)
 
-            if step >= FLAGS.train_steps:
-                break
+# Check the server definition
+#server.server_def
+# Start training
+with tf.Session("grpc://192.168.1.106:2259") as sess:  # <----- IMPORTANT: Pass the server target to the session definition
+#print(server.target)
+#with tf.Session(server.target) as sess:  # <----- IMPORTANT: Pass the server target to the session definition
 
-        time_end = time.time()
-        print 'Training ends @ %f' % time_end
-        train_time = time_end - time_begin
-        print 'Training elapsed time:%f s' % train_time
+    # Run the initializer
+    sess.run(init)
 
-        val_feed = {x: mnist.validation.images, y_: mnist.validation.labels}
-        val_xent = sess.run(cross_entropy, feed_dict=val_feed)
-        print 'After %d training step(s), validation cross entropy = %g' % (FLAGS.train_steps, val_xent)
-    sess.close()
+    for step in range(100):
+        batch_x, batch_y = mnist.train.next_batch(batch_size)
+        
+        # Run optimization op (backprop)
+        sess.run(train_op, feed_dict={X: batch_x, Y: batch_y})
+        
+        if step % display_step == 0 or step == 1:
+            # Calculate batch loss and accuracy
+            loss, acc = sess.run([loss_op, accuracy], feed_dict={X: batch_x, Y : batch_y})
+            print("Step " + str(step) + ", Minibatch Loss= " + "{:.4f}".format(loss) + ", Training Accuracy= " + "{:.3f}".format(acc))
 
-if __name__ == '__main__':
-    tf.app.run()
+    # Get test set accuracy
+    print("Testing Accuracy:",sess.run(accuracy, feed_dict={X: mnist.test.images[:256],Y: mnist.test.labels[:256]}))
